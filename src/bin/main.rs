@@ -2,6 +2,7 @@ use server::ThreadPool;
 use std::fmt::Display;
 use std::io::prelude::*;
 use std::net::{TcpListener, TcpStream};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, SystemTime};
@@ -24,7 +25,8 @@ fn get_rps_for_snapshots(older: &Snapshot, newer: &Snapshot) -> f64 {
         return 0.0;
     }
     return (newer.total_request_count - older.total_request_count) as f64
-        / (newer.elapsed_time_millis - older.elapsed_time_millis) as f64 * 1000 as f64;
+        / (newer.elapsed_time_millis - older.elapsed_time_millis) as f64
+        * 1000 as f64;
 }
 
 fn main() {
@@ -33,6 +35,11 @@ fn main() {
     let snapshots: Arc<Mutex<Vec<Snapshot>>> = Arc::new(Mutex::new(Vec::new()));
     let start = SystemTime::now();
     let pool = ThreadPool::new(4);
+
+    ctrlc::set_handler(move || {
+        std::process::exit(0);
+    })
+    .expect("Error setting Ctrl-C handler");
 
     /*
      * Last N snapshots: (total_request_count, current_time)
@@ -85,7 +92,7 @@ fn main() {
                         - std::cmp::min(snapshots_stats.len(), SNAPSHOT_WINDOW_SIZE);
                     // trim the beginning of the array to retain N snapshots
                     snapshots_stats.drain(0..upper_bound_remove);
-                    
+
                     // print!("Snapshot stats: [");
                     // for i in snapshots_stats.iter() {
                     //     print!("{}", i);
