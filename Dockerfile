@@ -14,6 +14,6 @@ RUN cargo install --path .
 
 
 FROM debian:buster-slim
-COPY --from=builder /usr/local/cargo/bin/main /usr/local/bin/main
+COPY --from=builder /usr/local/cargo/bin/tokio /usr/local/bin/main
 
 EXPOSE 8080

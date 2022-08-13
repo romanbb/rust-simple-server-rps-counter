@@ -85,11 +85,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                 snapshots.get(snapshots.len() - 1).unwrap(),
                             );
 
-                            println!(
-                                "RPS {}, total requests: {}",
-                                rps,
-                                total_requests
-                            );
+                            println!("RPS {}, total requests: {}", rps, total_requests);
                         }
 
                         // save snapshot
@@ -98,7 +94,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
                             total_request_count: *total_requests,
                         });
 
-                        println!("pushed snapshot");
 
                         // trim the beginning of the array to retain N snapshots
                         let upper_bound_remove =
@@ -111,10 +106,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     println!("Error {}", e);
                 }
             }
-            println!("Looped through timer thread");
             sleep(Duration::from_secs(1)).await;
+           // std::thread::sleep(Duration::from_secs(1));
         }
-        // thread::sleep(Duration::from_secs(1));
     });
 
     let listener = TcpListener::bind("0.0.0.0:8080").await?;
@@ -132,32 +126,45 @@ async fn main() -> Result<(), Box<dyn Error>> {
 }
 async fn handle_connection(mut socket: TcpStream, metrics: &Metrics) {
     let mut buf = vec![0; 1024];
+    let _read= socket.read(&mut buf).await;
+
+    let get = b"GET / HTTP/1.1\r\n";
+    let sleep = b"GET /sleep HTTP/1.1\r\n";
+
+    let status_line = if buf.starts_with(get) {
+        "HTTP/1.1 200 OK"
+    } else if buf.starts_with(sleep) {
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        "HTTP/1.1 200 OK"
+    } else {
+        "HTTP/1.1 404 NOT FOUND"
+    };
     // In a loop, read data from the socket and write the data back.
-    loop {
-        let n = socket
-            .read(&mut buf)
-            .await
-            .expect("failed to read data from socket");
+    // loop {
+        // let n = socket
+        //     .read(&mut buf)
+        //     .await
+        // .expect("failed to read data from socket");
 
-        if n == 0 {
-            return;
-        }
+        // if n == 0 {
+        //     return;
+        // }
+    // }
+    let contents = String::from("Hey there");
 
-        let contents = String::from("Hey there");
+    let response = format!(
+        "{}\r\nContent-Length: {}\r\n\r\n{}",
+        status_line,
+        contents.len(),
+        contents
+    );
 
-        let status_line = "HTTP/1.1 200 OK";
-        let response = format!(
-            "{}\r\nContent-Length: {}\r\n\r\n{}",
-            status_line,
-            contents.len(),
-            contents
-        );
+    socket
+        .write_all(response.as_bytes())
+        .await
+        .expect("failed to write data to socket");
 
-        socket
-            .write_all(response.as_bytes())
-            .await
-            .expect("failed to write data to socket");
+    socket.shutdown().await.unwrap();
 
-        metrics.increment().await;
-    }
+    metrics.increment().await;
 }
