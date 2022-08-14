@@ -5,7 +5,6 @@ use std::time::{Duration, SystemTime};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
-use tokio::time::sleep;
 
 const SNAPSHOT_WINDOW_SIZE: usize = 10;
 
@@ -68,6 +67,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     /*
      * Metrics thread
      */
+
+    let mut interval = tokio::time::interval(Duration::from_secs(1));
     let metrics_ref = Arc::clone(&metrics);
     tokio::spawn(async move {
         loop {
@@ -94,7 +95,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
                             total_request_count: *total_requests,
                         });
 
-
                         // trim the beginning of the array to retain N snapshots
                         let upper_bound_remove =
                             snapshots.len() - std::cmp::min(snapshots.len(), SNAPSHOT_WINDOW_SIZE);
@@ -106,8 +106,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     println!("Error {}", e);
                 }
             }
-            sleep(Duration::from_secs(1)).await;
-           // std::thread::sleep(Duration::from_secs(1));
+            interval.tick().await;
         }
     });
 
@@ -119,14 +118,17 @@ async fn main() -> Result<(), Box<dyn Error>> {
         tokio::spawn(async move {
             // let mut current_counter = cloned_counter_2.lock().unwrap();
             // *current_counter += 1;
+            handle_connection(socket).await;
+            // tokio::spawn(async move {
             let metrics = metrics.lock().await;
-            handle_connection(socket, &metrics).await;
+            metrics.increment().await;
+            // })
         });
     }
 }
-async fn handle_connection(mut socket: TcpStream, metrics: &Metrics) {
+async fn handle_connection(mut socket: TcpStream) {
     let mut buf = vec![0; 1024];
-    let _read= socket.read(&mut buf).await;
+    let _read = socket.read(&mut buf).await;
 
     let get = b"GET / HTTP/1.1\r\n";
     let sleep = b"GET /sleep HTTP/1.1\r\n";
@@ -141,14 +143,14 @@ async fn handle_connection(mut socket: TcpStream, metrics: &Metrics) {
     };
     // In a loop, read data from the socket and write the data back.
     // loop {
-        // let n = socket
-        //     .read(&mut buf)
-        //     .await
-        // .expect("failed to read data from socket");
+    // let n = socket
+    //     .read(&mut buf)
+    //     .await
+    // .expect("failed to read data from socket");
 
-        // if n == 0 {
-        //     return;
-        // }
+    // if n == 0 {
+    //     return;
+    // }
     // }
     let contents = String::from("Hey there");
 
@@ -164,7 +166,5 @@ async fn handle_connection(mut socket: TcpStream, metrics: &Metrics) {
         .await
         .expect("failed to write data to socket");
 
-    socket.shutdown().await.unwrap();
-
-    metrics.increment().await;
+    socket.shutdown().await.ok();
 }
