@@ -9,7 +9,6 @@ use tokio::sync::{oneshot, Mutex};
 const SNAPSHOT_WINDOW_SIZE: usize = 10;
 
 struct Metrics {
-    start_time: Arc<SystemTime>,
     total_requests: Arc<Mutex<i32>>,
     snapshots: Arc<Mutex<Vec<Snapshot>>>,
 }
@@ -47,9 +46,9 @@ fn get_rps_for_snapshots(older: &Snapshot, newer: &Snapshot) -> f64 {
 async fn main() -> Result<(), Box<dyn Error>> {
     // listener.set_ttl(100).expect("Couldn't set TTL");
 
+    let start_time = SystemTime::now();
     let metrics = Arc::new(Mutex::new(Metrics {
         total_requests: Arc::new(Mutex::new(0)),
-        start_time: Arc::new(SystemTime::now()),
         snapshots: Arc::new(Mutex::new(Vec::new())),
     }));
 
@@ -72,10 +71,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let metrics_ref = Arc::clone(&metrics);
     tokio::spawn(async move {
         loop {
-            let metrics = metrics_ref.lock().await;
-            match metrics.start_time.elapsed() {
+            match start_time.elapsed() {
                 Ok(elapsed) => {
                     if elapsed.as_millis() > 0 {
+                        let metrics = metrics_ref.lock().await;
                         let mut snapshots = metrics.snapshots.lock().await;
                         let total_requests = metrics.total_requests.lock().await;
 
