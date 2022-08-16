@@ -1,11 +1,12 @@
+use async_std::io::{ReadExt, WriteExt};
+use async_std::net::{TcpListener, TcpStream};
+use async_std::sync::Mutex;
+use async_std::prelude::*;
+use async_std::task;
 use std::error::Error;
 use std::fmt::Display;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{oneshot, Mutex};
-
 const SNAPSHOT_WINDOW_SIZE: usize = 10;
 
 struct Metrics {
@@ -43,7 +44,7 @@ fn get_rps_for_snapshots(older: &Snapshot, newer: &Snapshot) -> f64 {
         * 1000 as f64;
 }
 
-#[tokio::main]
+#[async_std::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     // listener.set_ttl(100).expect("Couldn't set TTL");
 
@@ -68,9 +69,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
      * Metrics thread
      */
 
-    let mut interval = tokio::time::interval(Duration::from_secs(1));
     let metrics_ref = Arc::clone(&metrics);
-    tokio::spawn(async move {
+    task::spawn(async move {
         loop {
             let metrics = metrics_ref.lock().await;
             match metrics.start_time.elapsed() {
@@ -106,7 +106,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     println!("Error {}", e);
                 }
             }
-            interval.tick().await;
+            task::sleep(Duration::from_secs(1)).await;
         }
     });
 
@@ -116,24 +116,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let (socket, _) = listener.accept().await?;
 
         let metrics = Arc::clone(&metrics);
-        tokio::spawn(async move {
-            // let mut current_counter = cloned_counter_2.lock().unwrap();
-            // *current_counter += 1;
-            if let Err(_) =
-                tokio::time::timeout(Duration::from_millis(2_000), handle_connection(socket)).await
-            {
-                println!("did not process request within 500 ms");
-            }
-            // tokio::spawn(async move {
+        task::spawn(async move {
+            handle_connection(socket).await;
             let metrics = metrics.lock().await;
             metrics.increment().await;
-            // })
         });
     }
 }
 async fn handle_connection(mut socket: TcpStream) {
     let mut buf = vec![0; 1024];
-    let _read = socket.read(&mut buf).await;
+    let _read = socket.read_exact(&mut buf);
 
     let get = b"GET / HTTP/1.1\r\n";
     let sleep = b"GET /sleep HTTP/1.1\r\n";
@@ -141,7 +133,7 @@ async fn handle_connection(mut socket: TcpStream) {
     let status_line = if buf.starts_with(get) {
         "HTTP/1.1 200 OK"
     } else if buf.starts_with(sleep) {
-        tokio::time::sleep(Duration::from_secs(5)).await;
+        task::sleep(Duration::from_secs(5)).await;
         "HTTP/1.1 200 OK"
     } else {
         "HTTP/1.1 404 NOT FOUND"
@@ -171,5 +163,5 @@ async fn handle_connection(mut socket: TcpStream) {
         .await
         .expect("failed to write data to socket");
 
-    socket.shutdown().await.ok();
+    socket.shutdown(std::net::Shutdown::Both).ok();
 }

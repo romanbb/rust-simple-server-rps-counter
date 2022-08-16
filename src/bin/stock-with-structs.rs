@@ -8,8 +8,18 @@ use std::time::{Duration, SystemTime};
 
 const SNAPSHOT_WINDOW_SIZE: usize = 10;
 
+struct Metrics {
+    total_requests: Arc<Mutex<i32>>,
+    snapshots: Arc<Mutex<Vec<Snapshot>>>,
+}
+impl Metrics {
+    fn increment(&self) {
+        let mut count = self.total_requests.lock().unwrap();
+        *count += 1;
+    }
+}
 struct Snapshot {
-    total_request_count: u128,
+    total_request_count: i32,
     elapsed_time_millis: u128,
 }
 
@@ -36,15 +46,18 @@ fn main() {
     let addr = SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 0], 8080));
     let listener = TcpListener::bind(addr).expect("Issue binding to IP Address");
     // listener.set_ttl(100).expect("Couldn't set TTL");
-    let request_counter = Arc::new(Mutex::new(0));
-    let snapshots: Arc<Mutex<Vec<Snapshot>>> = Arc::new(Mutex::new(Vec::new()));
-    let start = SystemTime::now();
     let pool = ThreadPool::new(4);
+    let start_time = SystemTime::now();
 
     ctrlc::set_handler(move || {
         std::process::exit(0);
     })
     .expect("Error setting Ctrl-C handler");
+
+    let metrics = Arc::new(Mutex::new(Metrics {
+        total_requests: Arc::new(Mutex::new(0)),
+        snapshots: Arc::new(Mutex::new(Vec::new())),
+    }));
 
     /*
      * Last N snapshots: (total_request_count, current_time)
@@ -52,20 +65,20 @@ fn main() {
      * then we can take an item i and j and calculate the RPS in that delta
      */
 
-    let rps_counter = Arc::clone(&request_counter);
-    let snapshots_for_stats_thread = Arc::clone(&snapshots);
-
+    let metrics_ref = Arc::clone(&metrics);
     /*
      * Metrics thread
      */
     thread::spawn(move || loop {
-        match start.elapsed() {
+        match start_time.elapsed() {
             Ok(elapsed) => {
                 if elapsed.as_millis() > 0 {
-                    let mut snapshots_stats = snapshots_for_stats_thread.lock().unwrap();
-                    let current_requests = rps_counter.lock().unwrap();
+                    let metrics = metrics_ref.lock().expect("Couldn't lock metrics");
 
-                    let elapsed_ms = start.elapsed().ok().unwrap().as_millis();
+                    let mut snapshots_stats = metrics.snapshots.lock().unwrap();
+                    let current_requests = metrics.total_requests.lock().unwrap();
+
+                    let elapsed_ms = elapsed.as_millis();
 
                     // need 2 to compare
                     if snapshots_stats.len() > 2 {
@@ -99,13 +112,17 @@ fn main() {
 
     for stream in listener.incoming() {
         let stream = stream.unwrap();
+        let metrics = Arc::clone(&metrics);
 
         // let snapshot_for_worker_thread = Arc::clone(&snapshots);
-        let cloned_counter_2 = Arc::clone(&request_counter);
+        // let cloned_counter_2 = Arc::clone(&request_counter);
         pool.execute(move || {
             handle_connection(stream);
-            let mut current_counter = cloned_counter_2.lock().unwrap();
-            *current_counter += 1;
+
+            let metrics = metrics.lock().expect("Couldn't lock metrics");
+            metrics.increment();
+            // let mut current_counter = cloned_counter_2.lock().unwrap();
+            // *current_counter += 1;
         })
     }
 }
@@ -139,4 +156,5 @@ fn handle_connection(mut stream: TcpStream) {
     stream.write(response.as_bytes()).unwrap();
     stream.flush().unwrap();
     stream.shutdown(std::net::Shutdown::Both).ok();
+
 }
